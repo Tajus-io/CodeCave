@@ -3,19 +3,14 @@
 #include <winternl.h>
 
 
-///
-
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #pragma comment(lib, "ntdll.lib")
 
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-
-
-
-
-
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #define CAVE_SIZE 50
 #define STATUS_SUCCESS ((NTSTATUS)0x00000000L)
@@ -30,38 +25,45 @@ typedef NTSTATUS(NTAPI* _NtReadFile)(
     ULONG Length,
     PLARGE_INTEGER ByteOffset,
     PULONG Key
-    );
+);
 
 
-
-
-
-
-
-
-
-
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 int FindCodeCave(char* target) {
     IO_STATUS_BLOCK iosb;
-    OBJECT_ATTRIBUTES obj = { sizeof(obj) };
-    UNICODE_STRING name;
     HANDLE file;
-
-    RtlInitUnicodeString(&name, L"\\??\\C:\\temp.txt");
-    InitializeObjectAttributes(&obj, &name, OBJ_CASE_INSENSITIVE, NULL, NULL);
-
+    
     file = CreateFileA(target, GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (file == INVALID_HANDLE_VALUE) return 0;
+    if (file == INVALID_HANDLE_VALUE) {
+        printf("[!] Failed to open file\n");
+        return 0;
+    }
 
     DWORD fsize = GetFileSize(file, NULL);
-    BYTE* buffer = malloc(fsize);
-    DWORD read;
+    BYTE* buffer = (BYTE*)malloc(fsize);
+    if (!buffer) {
+        printf("[!] Failed to allocate memory\n");
+        CloseHandle(file);
+        return 0;
+    }
 
     _NtReadFile NtReadFile = (_NtReadFile)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtReadFile");
-    NtReadFile(file, NULL, NULL, NULL, &iosb, buffer, fsize, NULL, NULL);
+    if (!NtReadFile) {
+        printf("[!] Failed to get NtReadFile\n");
+        free(buffer);
+        CloseHandle(file);
+        return 0;
+    }
+
+    NTSTATUS status = NtReadFile(file, NULL, NULL, NULL, &iosb, buffer, fsize, NULL, NULL);
     CloseHandle(file);
+
+    if (status != STATUS_SUCCESS) {
+        printf("[!] Failed to read file\n");
+        free(buffer);
+        return 0;
+    }
 
     PIMAGE_DOS_HEADER dos = (PIMAGE_DOS_HEADER)buffer;
     PIMAGE_NT_HEADERS nt = (PIMAGE_NT_HEADERS)(buffer + dos->e_lfanew);
@@ -75,17 +77,17 @@ int FindCodeCave(char* target) {
 
         for (DWORD x = 0; x < size; x++) {
             __asm {
-                mov esi, start
-                add esi, x
-                xor eax, eax
-                mov al, byte ptr[esi]
-                test al, al; check if byte is 0
-                jnz reset_counter
-                inc nullcount
-                jmp check_size; Jump to size check
-                reset_counter :
-                mov nullcount, 0
-                    check_size :
+                mov esi, start          ; load section start
+                add esi, x              ; add current offset
+                xor eax, eax           ; clear eax
+                mov al, byte ptr[esi]  ; load current byte
+                test al, al            ; check if zero
+                jnz reset_counter      ; if not zero, reset
+                inc nullcount          ; increment counter
+                jmp check_size         ; check cave size
+                reset_counter:         
+                mov nullcount, 0       ; reset counter
+                check_size:            ; continue
             }
 
             if (nullcount >= CAVE_SIZE) {
@@ -106,11 +108,11 @@ int FindCodeCave(char* target) {
 
 int main(int argc, char* argv[]) {
     if (argc != 2) {
-        printf("[!] No file provided!\n");
+        printf("[!] Usage: %s <file>\n", argv[0]);
         return 1;
     }
 
-    printf("[*] looking for caves >= %d bytes...\n\n", CAVE_SIZE);
+    printf("[*] Looking for caves >= %d bytes...\n\n", CAVE_SIZE);
     FindCodeCave(argv[1]);
     return 0;
 }
